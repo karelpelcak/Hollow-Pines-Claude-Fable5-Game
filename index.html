@@ -1,0 +1,1444 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HOLLOW PINES</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
+  body { font-family: "Courier New", monospace; color: #cfd6cf; }
+  #c { display: block; width: 100%; height: 100%; }
+
+  .overlay {
+    position: fixed; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; text-align: center;
+    background: radial-gradient(ellipse at center, rgba(8,12,10,0.92) 0%, #000 100%);
+    z-index: 30; padding: 24px;
+  }
+  .overlay h1 { font-size: 52px; letter-spacing: 14px; color: #b8c4b0; font-weight: normal; }
+  .overlay h2 { font-size: 13px; letter-spacing: 6px; color: #5c6b58; margin-top: 6px; }
+  .overlay p  { max-width: 560px; margin: 18px 0; font-size: 14px; line-height: 1.7; color: #8d998a; }
+  .overlay .controls { font-size: 12px; color: #66735f; line-height: 2; }
+  .overlay .go {
+    margin-top: 26px; padding: 12px 38px; border: 1px solid #4a5a45; background: none;
+    color: #b8c4b0; font-family: inherit; font-size: 14px; letter-spacing: 4px; cursor: pointer;
+  }
+  .overlay .go:hover { background: #1a2418; }
+  .hidden { display: none !important; }
+
+  #hud { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
+  #vignette {
+    position: absolute; inset: 0; opacity: 0;
+    background: radial-gradient(ellipse at center, transparent 28%, rgba(0,0,0,0.96) 100%);
+  }
+  #flash { position: absolute; inset: 0; background: #000; opacity: 0; }
+  #compass { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); opacity: 0.85; }
+  #objective {
+    position: absolute; top: 16px; left: 18px; font-size: 12px; letter-spacing: 1px;
+    color: #93a08d; text-shadow: 0 0 6px #000; max-width: 320px;
+  }
+  #meters { position: absolute; bottom: 18px; left: 18px; font-size: 12px; text-shadow: 0 0 6px #000; }
+  #radioPct { letter-spacing: 1px; color: #93a08d; }
+  #radioPct.low { color: #c25b4a; }
+  #flWrap { margin-top: 7px; width: 130px; height: 6px; border: 1px solid #44503f; }
+  #flBar { height: 100%; background: #8fa37f; width: 100%; }
+  #prompt {
+    position: absolute; bottom: 26%; left: 50%; transform: translateX(-50%);
+    font-size: 13px; letter-spacing: 2px; color: #cfd6cf; text-shadow: 0 0 8px #000;
+  }
+  #msg {
+    position: absolute; bottom: 12%; left: 50%; transform: translateX(-50%);
+    max-width: 620px; text-align: center; font-size: 14px; line-height: 1.6;
+    color: #b9c6b2; text-shadow: 0 0 8px #000; opacity: 0; transition: opacity 0.6s;
+  }
+  #fps { position: absolute; top: 16px; right: 18px; font-size: 11px; color: #5c6b58; }
+  #dot { position: absolute; top: 50%; left: 50%; width: 3px; height: 3px; margin: -1px;
+         background: rgba(200,210,195,0.35); border-radius: 50%; }
+  .stats { font-size: 12px; color: #66735f; line-height: 2; margin-top: 8px; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="hud">
+  <div id="vignette"></div>
+  <div id="flash"></div>
+  <canvas id="compass" width="340" height="30"></canvas>
+  <div id="objective"></div>
+  <div id="meters">
+    <div id="radioPct">RADIO 100%</div>
+    <div id="flWrap"><div id="flBar"></div></div>
+  </div>
+  <div id="prompt"></div>
+  <div id="msg"></div>
+  <div id="fps"></div>
+  <div id="dot"></div>
+</div>
+
+<div id="title" class="overlay">
+  <h1>HOLLOW PINES</h1>
+  <h2>A SEARCH AND RESCUE INCIDENT</h2>
+  <p>Marek Doubek, 34, went missing three days ago on the Hollow Pines loop.
+     The official search was suspended at sundown. You stayed.
+     You have until your radio battery dies to find him and bring him out.</p>
+  <p class="controls">
+    WASD — move &nbsp;·&nbsp; SHIFT — sprint &nbsp;·&nbsp; MOUSE — look<br>
+    F — flashlight &nbsp;·&nbsp; E — interact &nbsp;·&nbsp; P — fps counter<br>
+    HEADPHONES STRONGLY RECOMMENDED
+  </p>
+  <button class="go" id="startBtn">BEGIN THE SEARCH</button>
+</div>
+
+<div id="pause" class="overlay hidden">
+  <h2>PAUSED</h2>
+  <button class="go" id="resumeBtn">RESUME</button>
+</div>
+
+<div id="end" class="overlay hidden">
+  <h1 id="endTitle" style="font-size:34px; letter-spacing:10px;"></h1>
+  <p id="endText"></p>
+  <div class="stats" id="endStats"></div>
+  <button class="go" onclick="location.reload()">SEARCH AGAIN</button>
+</div>
+
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js';
+
+/* ============================================================
+   HOLLOW PINES — browser horror, 60 FPS budget
+   PBR scanned textures (Polyhaven CC0), needle-card conifers,
+   rigged GLB character. One dynamic shadow light. Instanced
+   forest. Procedural audio.
+   ============================================================ */
+
+// ---------- deterministic rng ----------
+function mulberry32(a){ return function(){ a|=0; a=a+0x6D2B79F5|0;
+  let t=Math.imul(a^a>>>15,1|a); t=t+Math.imul(t^t>>>7,61|t)^t;
+  return ((t^t>>>14)>>>0)/4294967296; }; }
+const rng = mulberry32(1973);
+
+// ---------- terrain ----------
+function terrainH(x,z){
+  return Math.sin(x*0.021)*2.1 + Math.cos(z*0.017)*1.9
+       + Math.sin((x+z)*0.043)*0.7 + Math.sin(x*0.005-z*0.007)*2.6;
+}
+
+// ---------- world layout ----------
+const TRAILHEAD = { x: 0, z: 200 };
+const HOLLOW    = { x: 0, z: -185 };
+const CLUES = [
+  { x: -70, z:  90, name: "Marek's jacket",  msg: "Base: ...that's his jacket. Torn at the shoulder. Mark the position and come back in. Over." },
+  { x:  55, z:  10, name: "Marek's bottle",  msg: "Base: Copy. He's moving AWAY from the trail. That makes no sense, he knows this loop. Over." },
+  { x: -40, z: -90, name: "Marek's camera",  msg: "Base: Volunteer 6 — the last frames on that roll were taken TONIGHT. They're of you. From behind. Get out of there. Over." }
+];
+const BATTERIES = [ {x:18,z:152},{x:-58,z:42},{x:12,z:-42},{x:-22,z:-138} ];
+const BOUND_X = 140, BOUND_Z = 228;
+
+// ---------- state ----------
+const S = {
+  phase: 'TITLE',            // TITLE | FIND | HOLLOW | ESCORT | END
+  cluesFound: 0,
+  flashOn: true, flashBattery: 100, batteriesUsed: 0,
+  radio: 100,
+  composure: 100,
+  stamina: 100,
+  time: 0, caught: 0,
+  paused: true, locked: false,
+  showFps: false,
+  marekFollowing: false,
+  boundsWarned: false, repelTaught: false, huntTaught: false
+};
+
+// ---------- renderer / scene ----------
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.15;
+const MAX_ANISO = renderer.capabilities.getMaxAnisotropy();
+
+const scene = new THREE.Scene();
+const NIGHT = new THREE.Color(0x05080c);
+scene.background = NIGHT;
+scene.fog = new THREE.FogExp2(0x05080c, 0.026);   // fog doubles as far-plane culling
+
+const camera = new THREE.PerspectiveCamera(75, innerWidth/innerHeight, 0.1, 130);
+camera.rotation.order = 'YXZ';
+camera.position.set(TRAILHEAD.x, terrainH(TRAILHEAD.x, TRAILHEAD.z) + 1.7, TRAILHEAD.z);
+camera.rotation.y = 0;   // face north, into the forest
+scene.add(camera);
+
+// static fill — almost nothing; the flashlight is the game
+scene.add(new THREE.HemisphereLight(0x1c2735, 0x05070a, 0.22));
+const moon = new THREE.DirectionalLight(0x9db4d6, 0.12);
+moon.position.set(60, 90, -40);
+scene.add(moon);
+
+// ---------- flashlight (the ONLY shadow caster) ----------
+const lightRig = new THREE.Object3D();
+scene.add(lightRig);
+const spot = new THREE.SpotLight(0xfff0d2, 170, 55, 0.52, 0.62, 1.6);
+spot.castShadow = true;
+spot.shadow.mapSize.set(1024, 1024);
+spot.shadow.camera.near = 0.4;
+spot.shadow.camera.far = 55;
+spot.shadow.bias = -0.002;
+spot.position.set(0.25, -0.18, 0);
+const spotTarget = new THREE.Object3D();
+spotTarget.position.set(0, -0.4, -12);
+lightRig.add(spot, spotTarget);
+spot.target = spotTarget;
+
+/* ============================================================
+   TEXTURES — scanned PBR sets (Polyhaven, CC0) + procedural cards
+   ============================================================ */
+const texLoader = new THREE.TextureLoader();
+function pbr(file, srgb, rx, ry){
+  const t = texLoader.load('textures/' + file);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(rx, ry);
+  t.anisotropy = MAX_ANISO;
+  if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+const groundDiff = pbr('forest_floor_diff.jpg', true,  96, 96);
+const groundNor  = pbr('forest_floor_nor.jpg',  false, 96, 96);
+const barkDiff   = pbr('pine_bark_diff.jpg',    true,  1.6, 2.4);
+const barkNor    = pbr('pine_bark_nor.jpg',     false, 1.6, 2.4);
+const logDiff    = pbr('pine_bark_diff.jpg',    true,  2.4, 1.0);
+const logNor     = pbr('pine_bark_nor.jpg',     false, 2.4, 1.0);
+const rockDiff   = pbr('rock_boulder_dry_diff.jpg', true,  1.5, 1.5);
+const rockNor    = pbr('rock_boulder_dry_nor.jpg',  false, 1.5, 1.5);
+
+// procedurally painted conifer-branch card (diffuse + alpha)
+function branchTexture(){
+  const cv = document.createElement('canvas'); cv.width = cv.height = 512;
+  const ctx = cv.getContext('2d');
+  const r = mulberry32(7);
+  function needleRun(x0, y0, x1, y1, spacing, len, back){
+    const dx = x1-x0, dy = y1-y0, dist = Math.hypot(dx,dy);
+    const stepX = dx/dist*spacing, stepY = dy/dist*spacing;
+    const baseAng = Math.atan2(dy,dx);
+    const n = (dist/spacing)|0;
+    let x = x0, y = y0;
+    for (let i=0;i<n;i++){
+      for (const side of [-1,1]){
+        const a = baseAng + side*(0.95 + r()*0.6) ;
+        const L = len*(0.7 + r()*0.6);
+        const hue = 95 + r()*40, sat = 22 + r()*22, lit = back ? 5 + r()*6 : 10 + r()*14;
+        ctx.strokeStyle = 'hsl(' + hue + ',' + sat + '%,' + lit + '%)';
+        ctx.lineWidth = 1.4 + r()*1.2;
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x + Math.cos(a)*L, y + Math.sin(a)*L);
+        ctx.stroke();
+      }
+      x += stepX; y += stepY;
+    }
+  }
+  function branch(back){
+    // main stem bottom-center to top
+    ctx.strokeStyle = '#2a2018'; ctx.lineWidth = back ? 5 : 3.5;
+    ctx.beginPath(); ctx.moveTo(256, 506); ctx.lineTo(256, 36); ctx.stroke();
+    needleRun(256, 500, 256, 40, 3.6, 17, back);
+    // side stems
+    for (let t = 0.06; t < 0.92; t += 0.065){
+      const y = 506 - t*466;
+      const L = (1-t)*150 + 36;
+      for (const side of [-1,1]){
+        const a = -Math.PI/2 + side*(1.15 - t*0.35);
+        const ex = 256 + Math.cos(a)*L, ey = y + Math.sin(a)*L;
+        ctx.strokeStyle = '#241c14'; ctx.lineWidth = 2.2;
+        ctx.beginPath(); ctx.moveTo(256, y); ctx.lineTo(ex, ey); ctx.stroke();
+        needleRun(256, y, ex, ey, 3.8, 14, back);
+      }
+    }
+  }
+  branch(true);    // dark under-layer for depth
+  branch(false);   // lit layer
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = MAX_ANISO;
+  return t;
+}
+const branchTex = branchTexture();
+
+// procedurally painted grass-blade card
+function grassTexture(){
+  const cv = document.createElement('canvas'); cv.width = 256; cv.height = 256;
+  const ctx = cv.getContext('2d');
+  const r = mulberry32(41);
+  for (let i=0;i<150;i++){
+    const x0 = r()*256, top = 30 + r()*120, lean = (r()-0.5)*70;
+    const hue = 80 + r()*50, sat = 18 + r()*24, lit = 6 + r()*14;
+    ctx.strokeStyle = 'hsl(' + hue + ',' + sat + '%,' + lit + '%)';
+    ctx.lineWidth = 1.2 + r()*2.2;
+    ctx.beginPath();
+    ctx.moveTo(x0, 256);
+    ctx.quadraticCurveTo(x0 + lean*0.4, 256 - (256-top)*0.6, x0 + lean, top);
+    ctx.stroke();
+  }
+  const t = new THREE.CanvasTexture(cv);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+const grassTex = grassTexture();
+
+/* ============================================================
+   GEOMETRY HELPERS
+   ============================================================ */
+// merge BufferGeometries (position/normal/uv + index)
+function mergeGeo(list){
+  let vTotal = 0, iTotal = 0;
+  const hasUv = list.every(g => g.attributes.uv);
+  for (const g of list){ vTotal += g.attributes.position.count; iTotal += g.index.count; }
+  const pos = new Float32Array(vTotal*3), nor = new Float32Array(vTotal*3);
+  const uv = hasUv ? new Float32Array(vTotal*2) : null;
+  const idx = vTotal > 65535 ? new Uint32Array(iTotal) : new Uint16Array(iTotal);
+  let vo = 0, io = 0;
+  for (const g of list){
+    pos.set(g.attributes.position.array, vo*3);
+    nor.set(g.attributes.normal.array, vo*3);
+    if (uv) uv.set(g.attributes.uv.array, vo*2);
+    const gi = g.index.array;
+    for (let i=0;i<gi.length;i++) idx[io+i] = gi[i] + vo;
+    vo += g.attributes.position.count; io += gi.length;
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.BufferAttribute(pos,3));
+  out.setAttribute('normal', new THREE.BufferAttribute(nor,3));
+  if (uv) out.setAttribute('uv', new THREE.BufferAttribute(uv,2));
+  out.setIndex(new THREE.BufferAttribute(idx,1));
+  return out;
+}
+
+// branch-card canopy: tiers of drooping textured quads radiating from the trunk
+function canopyCardsGeo(){
+  const r = mulberry32(99);
+  const parts = [];
+  const tiers = [
+    { y: 3.9, rad: 0.34, n: 7, w: 3.6, h: 3.0, droop: 0.62 },
+    { y: 5.7, rad: 0.30, n: 6, w: 3.0, h: 2.6, droop: 0.55 },
+    { y: 7.4, rad: 0.26, n: 5, w: 2.4, h: 2.2, droop: 0.48 },
+    { y: 9.0, rad: 0.20, n: 4, w: 1.8, h: 1.8, droop: 0.38 },
+    { y:10.3, rad: 0.10, n: 3, w: 1.3, h: 1.5, droop: 0.10 }
+  ];
+  for (const t of tiers){
+    for (let i = 0; i < t.n; i++){
+      const ang = (i + r()*0.5) / t.n * Math.PI*2;
+      const g = new THREE.PlaneGeometry(t.w, t.h);
+      g.translate(0, t.h*0.5, 0);                       // pivot at branch base
+      g.rotateX(-(Math.PI/2 - t.droop));                // tip leans outward & down
+      g.rotateZ((r()-0.5)*0.25);
+      g.rotateY(ang);
+      const ox = -Math.sin(ang)*t.rad, oz = -Math.cos(ang)*t.rad;
+      g.translate(ox, t.y + (r()-0.5)*0.4, oz);
+      parts.push(g);
+    }
+  }
+  return mergeGeo(parts);
+}
+
+// crossed-quad geometry (grass / shrubs)
+function crossGeo(w, h){
+  const a = new THREE.PlaneGeometry(w, h); a.translate(0, h/2, 0);
+  const b = a.clone(); b.rotateY(Math.PI/2);
+  return mergeGeo([a, b]);
+}
+
+/* ============================================================
+   GROUND / SKY
+   ============================================================ */
+{
+  const g = new THREE.PlaneGeometry(620, 620, 110, 110);
+  g.rotateX(-Math.PI/2);
+  const pos = g.attributes.position;
+  const colors = new Float32Array(pos.count * 3);
+  for (let i = 0; i < pos.count; i++){
+    const x = pos.getX(i), z = pos.getZ(i);
+    pos.setY(i, terrainH(x, z));
+    // macro brightness variation to break texture tiling
+    const v = 0.62 + 0.38 * Math.abs(Math.sin(x*0.13)*Math.cos(z*0.11)) + 0.12*Math.sin(x*1.7)*Math.cos(z*2.3);
+    colors[i*3] = v; colors[i*3+1] = v; colors[i*3+2] = v*0.96;
+  }
+  g.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  g.computeVertexNormals();
+  const ground = new THREE.Mesh(g, new THREE.MeshLambertMaterial({
+    map: groundDiff, normalMap: groundNor, normalScale: new THREE.Vector2(1.1, 1.1),
+    vertexColors: true
+  }));
+  ground.receiveShadow = true;
+  scene.add(ground);
+}
+{
+  const n = 320, p = new Float32Array(n*3);
+  for (let i=0;i<n;i++){
+    const a = rng()*Math.PI*2, r = 160+rng()*180;
+    p[i*3] = Math.cos(a)*r; p[i*3+1] = 90+rng()*160; p[i*3+2] = Math.sin(a)*r;
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(p,3));
+  const m = new THREE.PointsMaterial({ color: 0x8fa3c0, size: 0.9, sizeAttenuation: false,
+    transparent: true, opacity: 0.45, fog: false });
+  scene.add(new THREE.Points(g, m));
+}
+
+/* ============================================================
+   FOREST — instanced, collision via spatial hash
+   ============================================================ */
+const grid = new Map();
+function gridAdd(x,z,r){
+  const k = ((x/9)|0) + ',' + ((z/9)|0);
+  if (!grid.has(k)) grid.set(k, []);
+  grid.get(k).push({x,z,r});
+}
+function nearPOI(x,z){
+  if (Math.hypot(x-TRAILHEAD.x, z-TRAILHEAD.z) < 14) return true;
+  if (Math.hypot(x-HOLLOW.x,    z-HOLLOW.z)    < 17) return true;
+  for (const c of CLUES)     if (Math.hypot(x-c.x, z-c.z) < 4) return true;
+  for (const b of BATTERIES) if (Math.hypot(x-b.x, z-b.z) < 4) return true;
+  return false;
+}
+const dummy = new THREE.Object3D();
+function scatter(mesh, count, place){
+  let i = 0, guard = 0;
+  while (i < count && guard++ < count*40){
+    const x = (rng()*2-1)*150, z = (rng()*2-1)*250;
+    if (Math.abs(x) > 152 || Math.abs(z) > 252 || nearPOI(x,z)) continue;
+    place(x, z, i, dummy);
+    dummy.updateMatrix();
+    mesh.setMatrixAt(i, dummy.matrix);
+    i++;
+  }
+  mesh.instanceMatrix.needsUpdate = true;
+  scene.add(mesh);
+}
+
+const barkMat = new THREE.MeshLambertMaterial({
+  map: barkDiff, normalMap: barkNor, normalScale: new THREE.Vector2(1.2, 1.2) });
+const logMat = new THREE.MeshLambertMaterial({
+  map: logDiff, normalMap: logNor, normalScale: new THREE.Vector2(1.2, 1.2) });
+const rockMat = new THREE.MeshLambertMaterial({
+  map: rockDiff, normalMap: rockNor, normalScale: new THREE.Vector2(1.1, 1.1) });
+const needleMat = new THREE.MeshLambertMaterial({
+  map: branchTex, alphaTest: 0.45, side: THREE.DoubleSide });
+const coreMat = new THREE.MeshLambertMaterial({ color: 0x0a140c });
+const grassMat = new THREE.MeshLambertMaterial({
+  map: grassTex, alphaTest: 0.4, side: THREE.DoubleSide });
+const shrubMat = new THREE.MeshLambertMaterial({
+  map: branchTex, alphaTest: 0.45, side: THREE.DoubleSide });
+
+// shadow-pass materials so alpha cards cast needle-shaped shadows, not quads
+const needleDepth = new THREE.MeshDepthMaterial({
+  depthPacking: THREE.RGBADepthPacking, map: branchTex, alphaTest: 0.45 });
+
+const N_PINE = 2200;
+const pineTransforms = [];
+{
+  // trunks
+  const tg = new THREE.CylinderGeometry(0.16, 0.38, 11.5, 8);
+  tg.translate(0, 5.75, 0);
+  const trunks = new THREE.InstancedMesh(tg, barkMat, N_PINE);
+  trunks.castShadow = true; trunks.receiveShadow = true;
+  scatter(trunks, N_PINE, (x,z,i,d)=>{
+    const s = 0.8 + rng()*1.1;
+    d.position.set(x, terrainH(x,z), z);
+    d.rotation.set(0, rng()*Math.PI*2, 0);
+    d.scale.setScalar(s);
+    pineTransforms.push({x, z, s, ry: d.rotation.y});
+    gridAdd(x, z, 0.4*s);
+  });
+
+  function applyPineTransforms(mesh){
+    for (let i = 0; i < pineTransforms.length; i++){
+      const t = pineTransforms[i];
+      dummy.position.set(t.x, terrainH(t.x,t.z), t.z);
+      dummy.rotation.set(0, t.ry, 0);
+      dummy.scale.setScalar(t.s);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(i, dummy.matrix);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
+    scene.add(mesh);
+  }
+  // dark cone core inside the cards — fills the silhouette
+  const c1 = new THREE.ConeGeometry(1.5, 4.0, 7); c1.translate(0, 5.6, 0);
+  const c2 = new THREE.ConeGeometry(1.0, 3.4, 7); c2.translate(0, 7.8, 0);
+  const c3 = new THREE.ConeGeometry(0.55, 2.6, 7); c3.translate(0, 9.8, 0);
+  const cores = new THREE.InstancedMesh(mergeGeo([c1,c2,c3]), coreMat, N_PINE);
+  applyPineTransforms(cores);
+  // needle cards
+  const cards = new THREE.InstancedMesh(canopyCardsGeo(), needleMat, N_PINE);
+  cards.castShadow = true;
+  cards.customDepthMaterial = needleDepth;
+  applyPineTransforms(cards);
+}
+
+// dead trunks
+{
+  const g = new THREE.CylinderGeometry(0.12, 0.32, 7.5, 7); g.translate(0, 3.75, 0);
+  const dead = new THREE.InstancedMesh(g, barkMat, 300);
+  dead.castShadow = true;
+  scatter(dead, 300, (x,z,i,d)=>{
+    d.position.set(x, terrainH(x,z), z);
+    d.rotation.set((rng()-0.5)*0.16, rng()*Math.PI*2, (rng()-0.5)*0.16);
+    d.scale.setScalar(0.7 + rng()*0.9);
+    gridAdd(x, z, 0.3);
+  });
+}
+// undergrowth: grass tufts + conifer shrubs + rocks + fallen logs
+{
+  const grass = new THREE.InstancedMesh(crossGeo(1.5, 1.0), grassMat, 2000);
+  scatter(grass, 2000, (x,z,i,d)=>{
+    d.position.set(x, terrainH(x,z), z);
+    d.rotation.set(0, rng()*Math.PI*2, 0);
+    d.scale.set(0.6+rng()*1.3, 0.5+rng()*1.0, 0.6+rng()*1.3);
+  });
+  const shrubs = new THREE.InstancedMesh(crossGeo(2.4, 2.0), shrubMat, 600);
+  shrubs.castShadow = true;
+  shrubs.customDepthMaterial = needleDepth;
+  scatter(shrubs, 600, (x,z,i,d)=>{
+    d.position.set(x, terrainH(x,z), z);
+    d.rotation.set(0, rng()*Math.PI*2, 0);
+    d.scale.set(0.5+rng()*1.0, 0.45+rng()*0.7, 0.5+rng()*1.0);
+  });
+  const rg = new THREE.DodecahedronGeometry(0.7, 1);
+  const rocks = new THREE.InstancedMesh(rg, rockMat, 240);
+  rocks.castShadow = true; rocks.receiveShadow = true;
+  scatter(rocks, 240, (x,z,i,d)=>{
+    d.position.set(x, terrainH(x,z)+0.1, z);
+    d.rotation.set(rng()*3, rng()*3, rng()*3);
+    d.scale.set(0.5+rng()*1.4, 0.4+rng()*0.8, 0.5+rng()*1.4);
+  });
+  const lg = new THREE.CylinderGeometry(0.28, 0.34, 6, 8); lg.rotateZ(Math.PI/2);
+  const logs = new THREE.InstancedMesh(lg, logMat, 90);
+  logs.castShadow = true; logs.receiveShadow = true;
+  scatter(logs, 90, (x,z,i,d)=>{
+    d.position.set(x, terrainH(x,z)+0.22, z);
+    d.rotation.set(0, rng()*Math.PI*2, (rng()-0.5)*0.1);
+    d.scale.setScalar(0.7+rng()*0.7);
+  });
+}
+
+// ---------- trailhead ----------
+{
+  const y = terrainH(TRAILHEAD.x, TRAILHEAD.z);
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.07,0.09,3.4,7), logMat);
+  pole.position.set(TRAILHEAD.x+2, y+1.7, TRAILHEAD.z);
+  pole.castShadow = true;
+  scene.add(pole);
+  const lamp = new THREE.PointLight(0xffc890, 26, 24, 1.8);
+  lamp.position.set(TRAILHEAD.x+2, y+3.3, TRAILHEAD.z);
+  scene.add(lamp);
+  const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.09,8,6),
+    new THREE.MeshBasicMaterial({ color: 0xffd9a0 }));
+  bulb.position.copy(lamp.position);
+  scene.add(bulb);
+  const sign = new THREE.Mesh(new THREE.BoxGeometry(1.6,0.9,0.08), logMat);
+  sign.position.set(TRAILHEAD.x-1.5, y+1.5, TRAILHEAD.z-1);
+  sign.rotation.y = 0.4;
+  sign.castShadow = true;
+  scene.add(sign);
+}
+
+// ---------- glint sprite ----------
+function glintTexture(){
+  const cv = document.createElement('canvas'); cv.width = cv.height = 64;
+  const ctx = cv.getContext('2d');
+  const g = ctx.createRadialGradient(32,32,2,32,32,30);
+  g.addColorStop(0,'rgba(255,250,230,1)');
+  g.addColorStop(0.3,'rgba(255,240,200,0.35)');
+  g.addColorStop(1,'rgba(255,240,200,0)');
+  ctx.fillStyle = g; ctx.fillRect(0,0,64,64);
+  return new THREE.CanvasTexture(cv);
+}
+const glintTex = glintTexture();
+function makeGlint(x,y,z){
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: glintTex, blending: THREE.AdditiveBlending, depthWrite: false,
+    transparent: true, opacity: 0.7 }));
+  sp.position.set(x, y, z);
+  sp.scale.setScalar(0.5);
+  scene.add(sp);
+  return sp;
+}
+
+// ---------- pickups ----------
+const pickups = [];
+const clueColors = [0x5a2a22, 0x2a3e5a, 0x6a5a22];
+CLUES.forEach((c, i) => {
+  const y = terrainH(c.x, c.z);
+  const m = new THREE.Mesh(new THREE.BoxGeometry(0.5,0.18,0.35),
+    new THREE.MeshLambertMaterial({ color: clueColors[i] }));
+  m.position.set(c.x, y+0.1, c.z);
+  m.rotation.y = rng()*3;
+  m.castShadow = true;
+  scene.add(m);
+  pickups.push({ type:'clue', i, x:c.x, z:c.z, mesh:m, glint:makeGlint(c.x,y+0.45,c.z),
+    name:c.name, msg:c.msg, found:false });
+});
+BATTERIES.forEach(b => {
+  const y = terrainH(b.x, b.z);
+  const m = new THREE.Mesh(new THREE.BoxGeometry(0.16,0.1,0.1),
+    new THREE.MeshLambertMaterial({ color: 0x3d5232 }));
+  m.position.set(b.x, y+0.06, b.z);
+  scene.add(m);
+  pickups.push({ type:'battery', x:b.x, z:b.z, mesh:m, glint:makeGlint(b.x,y+0.35,b.z),
+    name:'a flashlight battery', found:false });
+});
+
+/* ============================================================
+   CHARACTERS — rigged GLB human for Marek; his stretched
+   all-black double as the entity
+   ============================================================ */
+const marek = new THREE.Group();
+{
+  // placeholder until the GLB streams in
+  const cloth = new THREE.MeshLambertMaterial({ color: 0x232830 });
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.26, 0.85, 4, 8), cloth);
+  body.position.y = 0.95; body.castShadow = true;
+  marek.add(body);
+  marek.position.set(HOLLOW.x, terrainH(HOLLOW.x, HOLLOW.z), HOLLOW.z);
+  scene.add(marek);
+  // his dropped flashlight, still on
+  const fl = new THREE.Mesh(new THREE.CylinderGeometry(0.04,0.05,0.26,8),
+    new THREE.MeshLambertMaterial({ color: 0x444a4f }));
+  fl.position.set(HOLLOW.x+1.2, terrainH(HOLLOW.x+1.2,HOLLOW.z+0.8)+0.06, HOLLOW.z+0.8);
+  fl.rotation.z = Math.PI/2;
+  scene.add(fl);
+  const dim = new THREE.PointLight(0xfff4cc, 6, 9, 2);
+  dim.position.set(HOLLOW.x+1.6, terrainH(HOLLOW.x+1.6,HOLLOW.z+0.8)+0.15, HOLLOW.z+0.8);
+  scene.add(dim);
+}
+
+const entityMesh = new THREE.Group();
+{
+  // placeholder silhouette until GLB loads
+  const mat = new THREE.MeshBasicMaterial({ color: 0x07070a });
+  const body = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.42, 2.45, 7), mat);
+  body.position.y = 1.22;
+  entityMesh.add(body);
+  entityMesh.visible = false;
+  scene.add(entityMesh);
+}
+
+let marekMixer = null, entityMixer = null;
+const marekAnim = { idle: null, walk: null, cur: 'idle' };
+new GLTFLoader().load('models/Soldier.glb', (g) => {
+  const findClip = re => g.animations.find(c => re.test(c.name));
+  const idleClip = findClip(/idle/i), walkClip = findClip(/walk/i);
+
+  // --- Marek: dimmed, weathered hiker ---
+  const model = g.scene;
+  model.rotation.y = Math.PI;        // model faces -Z natively; our convention is +Z
+  model.traverse(o => {
+    if (o.isMesh){
+      o.castShadow = true;
+      o.material = o.material.clone();
+      o.material.color.multiplyScalar(0.5);   // mud, night, three days lost
+      if (o.material.map) o.material.map.anisotropy = MAX_ANISO;
+    }
+  });
+  marek.clear();
+  marek.add(model);
+  marekMixer = new THREE.AnimationMixer(model);
+  if (idleClip){ marekAnim.idle = marekMixer.clipAction(idleClip); marekAnim.idle.play(); }
+  if (walkClip){ marekAnim.walk = marekMixer.clipAction(walkClip); marekAnim.walk.timeScale = 1.5; }
+
+  // --- the entity: his silhouette, wrong proportions ---
+  const dark = cloneSkeleton(g.scene);
+  dark.rotation.y = Math.PI;
+  dark.scale.set(1.04, 1.32, 1.04);   // too tall, too thin
+  const black = new THREE.MeshBasicMaterial({ color: 0x050507 });
+  dark.traverse(o => { if (o.isMesh){ o.material = black; o.castShadow = false; } });
+  entityMesh.clear();
+  entityMesh.add(dark);
+  entityMixer = new THREE.AnimationMixer(dark);
+  if (walkClip){ const a = entityMixer.clipAction(walkClip); a.play(); }
+}, undefined, () => { /* keep placeholders on load failure */ });
+
+// ---------- the entity (audio-first; silhouette only) ----------
+const entity = {
+  x: 0, z: -400, state: 'DORMANT',           // DORMANT | STALK | APPROACH | RETREAT
+  angle: 0, radius: 32, repelHeat: 0,
+  snapTimer: 6, stepTimer: 0, huntTimer: 24, retreatT: 0
+};
+
+/* ============================================================
+   AUDIO — fully procedural Web Audio. No files, no downloads.
+   ============================================================ */
+let A = null;   // audio bundle, created on first user gesture
+function initAudio(){
+  const actx = new (window.AudioContext || window.webkitAudioContext)();
+  const master = actx.createGain(); master.gain.value = 0.9;
+  const limiter = actx.createDynamicsCompressor();
+  limiter.threshold.value = -12; limiter.knee.value = 6;
+  limiter.ratio.value = 14; limiter.attack.value = 0.002; limiter.release.value = 0.18;
+  master.connect(limiter); limiter.connect(actx.destination);
+
+  const noiseBuf = actx.createBuffer(1, actx.sampleRate*2, actx.sampleRate);
+  const nd = noiseBuf.getChannelData(0);
+  for (let i=0;i<nd.length;i++) nd[i] = Math.random()*2-1;
+
+  function panner(){
+    const p = actx.createPanner();
+    p.panningModel = 'HRTF';
+    p.distanceModel = 'exponential';
+    p.refDistance = 2; p.rolloffFactor = 1.1;
+    return p;
+  }
+  function setPos(p,x,y,z){
+    if (p.positionX){ p.positionX.value=x; p.positionY.value=y; p.positionZ.value=z; }
+    else p.setPosition(x,y,z);
+  }
+  function burst(o){
+    const t = actx.currentTime;
+    const src = actx.createBufferSource();
+    src.buffer = noiseBuf; src.playbackRate.value = o.rate || 1;
+    const f = actx.createBiquadFilter();
+    f.type = o.ftype || 'lowpass'; f.frequency.value = o.freq || 800; f.Q.value = o.q || 0.7;
+    const g = actx.createGain();
+    const atk = o.atk || 0.004, dur = o.dur || 0.1;
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(o.gain || 0.1, t+atk);
+    g.gain.exponentialRampToValueAtTime(0.0001, t+atk+dur);
+    src.connect(f); f.connect(g);
+    let out = g;
+    if (o.pos){ const p = panner(); setPos(p, o.pos.x, o.pos.y, o.pos.z); g.connect(p); out = p; }
+    out.connect(master);
+    src.start(t); src.stop(t+atk+dur+0.25);
+  }
+  function tone(o){
+    const t = actx.currentTime + (o.delay || 0);
+    const osc = actx.createOscillator();
+    osc.type = o.type || 'sine'; osc.frequency.setValueAtTime(o.freq, t);
+    if (o.glide) osc.frequency.exponentialRampToValueAtTime(o.glide, t+(o.dur||0.2));
+    const g = actx.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(o.gain || 0.05, t+(o.atk||0.01));
+    g.gain.exponentialRampToValueAtTime(0.0001, t+(o.atk||0.01)+(o.dur||0.2));
+    osc.connect(g);
+    let out = g;
+    if (o.pos){ const p = panner(); setPos(p, o.pos.x, o.pos.y, o.pos.z); g.connect(p); out = p; }
+    out.connect(master);
+    osc.start(t); osc.stop(t+(o.atk||0.01)+(o.dur||0.2)+0.2);
+  }
+
+  function loopNoise(filterType, freq, gainV){
+    const src = actx.createBufferSource(); src.buffer = noiseBuf; src.loop = true;
+    const f = actx.createBiquadFilter(); f.type = filterType; f.frequency.value = freq;
+    const g = actx.createGain(); g.gain.value = gainV;
+    src.connect(f); f.connect(g); g.connect(master);
+    src.start();
+    return { g, f };
+  }
+  const wind = loopNoise('lowpass', 260, 0.045);
+  const windLFO = actx.createOscillator(); windLFO.frequency.value = 0.06;
+  const windLFOg = actx.createGain(); windLFOg.gain.value = 0.022;
+  windLFO.connect(windLFOg); windLFOg.connect(wind.g.gain); windLFO.start();
+
+  const statics = loopNoise('bandpass', 1700, 0.0);
+  statics.f.Q.value = 0.8;
+
+  const breath = loopNoise('bandpass', 540, 0.0);
+  breath.f.Q.value = 1.4;
+
+  const rumOsc1 = actx.createOscillator(); rumOsc1.frequency.value = 36;
+  const rumOsc2 = actx.createOscillator(); rumOsc2.frequency.value = 47.3;
+  const rumGain = actx.createGain(); rumGain.gain.value = 0;
+  rumOsc1.connect(rumGain); rumOsc2.connect(rumGain); rumGain.connect(master);
+  rumOsc1.start(); rumOsc2.start();
+
+  const droneGain = actx.createGain(); droneGain.gain.value = 0;
+  [104.5, 110, 156.3].forEach(fr => {
+    const o = actx.createOscillator(); o.type='sine'; o.frequency.value = fr;
+    const g = actx.createGain(); g.gain.value = 0.33;
+    o.connect(g); g.connect(droneGain); o.start();
+  });
+  droneGain.connect(master);
+
+  function listener(px,py,pz,fx,fz){
+    const L = actx.listener;
+    if (L.positionX){
+      L.positionX.value=px; L.positionY.value=py; L.positionZ.value=pz;
+      L.forwardX.value=fx; L.forwardY.value=0; L.forwardZ.value=fz;
+      L.upX.value=0; L.upY.value=1; L.upZ.value=0;
+    } else { L.setPosition(px,py,pz); L.setOrientation(fx,0,fz,0,1,0); }
+  }
+
+  function footstep(sprint){
+    burst({ freq: 480+Math.random()*260, dur: 0.07, gain: sprint?0.13:0.075, rate: 0.8+Math.random()*0.4 });
+  }
+  function cricket(px,py,pz,level){
+    const ang = Math.random()*Math.PI*2, d = 9+Math.random()*15;
+    const p = panner(); setPos(p, px+Math.sin(ang)*d, py, pz+Math.cos(ang)*d);
+    const o = actx.createOscillator(); o.frequency.value = 4100+Math.random()*900;
+    const g = actx.createGain(); g.gain.value = 0;
+    const t0 = actx.currentTime, n = 3+(Math.random()*3|0);
+    for (let i=0;i<n;i++){
+      const ts = t0+i*0.085;
+      g.gain.setValueAtTime(0, ts);
+      g.gain.linearRampToValueAtTime(0.014*level, ts+0.018);
+      g.gain.linearRampToValueAtTime(0, ts+0.06);
+    }
+    o.connect(g); g.connect(p); p.connect(master);
+    o.start(t0); o.stop(t0+n*0.085+0.1);
+  }
+  function owl(px,py,pz){
+    const ang = Math.random()*Math.PI*2, d = 30+Math.random()*25;
+    const pos = { x:px+Math.sin(ang)*d, y:py+8, z:pz+Math.cos(ang)*d };
+    tone({ freq: 360, glide: 300, dur: 0.4, gain: 0.05, atk: 0.05, pos });
+    tone({ freq: 340, glide: 280, dur: 0.7, gain: 0.05, atk: 0.05, delay: 0.55, pos });
+  }
+  function snap(x,y,z){
+    burst({ ftype:'bandpass', freq: 1100+Math.random()*900, q: 1.5, dur: 0.05,
+            gain: 0.5, atk: 0.002, pos: {x,y,z} });
+  }
+  function entityStep(x,y,z){
+    burst({ freq: 160, dur: 0.12, gain: 0.4, atk: 0.005, rate: 0.5, pos:{x,y,z} });
+  }
+  function heartbeat(){
+    tone({ freq: 55, dur: 0.1, gain: 0.13, atk: 0.008 });
+    tone({ freq: 50, dur: 0.09, gain: 0.10, atk: 0.008, delay: 0.16 });
+  }
+  function radioBlip(){
+    burst({ ftype:'bandpass', freq: 1700, q: 0.8, dur: 0.18, gain: 0.07 });
+    tone({ freq: 880, dur: 0.06, gain: 0.025, delay: 0.05 });
+  }
+  function ping(){ tone({ freq: 1240, dur: 0.07, gain: 0.03 }); }
+  function pickupSnd(){
+    burst({ freq: 900, dur: 0.08, gain: 0.06 });
+    tone({ freq: 520, dur: 0.1, gain: 0.03, delay: 0.04 });
+  }
+  function click(){ tone({ type:'square', freq: 1900, dur: 0.02, gain: 0.02 }); }
+  function screech(x,y,z){
+    tone({ type:'sawtooth', freq: 1500, glide: 240, dur: 0.7, gain: 0.12, atk: 0.01, pos:{x,y,z} });
+    burst({ ftype:'highpass', freq: 2200, dur: 0.4, gain: 0.12, pos:{x,y,z} });
+  }
+  function caughtSting(){
+    burst({ freq: 320, dur: 0.5, gain: 0.5, atk: 0.005, rate: 0.4 });
+    tone({ type:'sawtooth', freq: 70, glide: 38, dur: 1.1, gain: 0.22 });
+  }
+
+  return { actx, master, wind, statics, breath, rumGain, droneGain, listener,
+           footstep, cricket, owl, snap, entityStep, heartbeat, radioBlip,
+           ping, pickupSnd, click, screech, caughtSting };
+}
+
+/* ============================================================
+   UI
+   ============================================================ */
+const el = id => document.getElementById(id);
+const msgEl = el('msg'), promptEl = el('prompt'), objEl = el('objective');
+const radioEl = el('radioPct'), flBarEl = el('flBar'), vigEl = el('vignette');
+const flashEl = el('flash'), fpsEl = el('fps');
+const compass = el('compass').getContext('2d');
+
+const msgQueue = [];
+let msgTimer = 0;
+function say(text, silent){
+  msgQueue.push({ text, silent: !!silent });
+}
+function updateMessages(dt){
+  if (msgTimer > 0){
+    msgTimer -= dt;
+    if (msgTimer <= 0) msgEl.style.opacity = 0;
+    return;
+  }
+  if (msgQueue.length){
+    const m = msgQueue.shift();
+    msgEl.textContent = m.text;
+    msgEl.style.opacity = 1;
+    msgTimer = 6;
+    if (A && !m.silent) A.radioBlip();
+  }
+}
+function setObjective(t){ objEl.textContent = t; }
+
+function wrapAngle(a){
+  while (a >  Math.PI) a -= Math.PI*2;
+  while (a < -Math.PI) a += Math.PI*2;
+  return a;
+}
+const CARDINALS = [[0,'N'],[Math.PI/4,'NE'],[Math.PI/2,'E'],[Math.PI*0.75,'SE'],
+  [Math.PI,'S'],[-Math.PI*0.75,'SW'],[-Math.PI/2,'W'],[-Math.PI/4,'NW']];
+function bearingTo(tx,tz){
+  return Math.atan2(tx-camera.position.x, -(tz-camera.position.z));
+}
+function drawCompass(){
+  const W = 340, H = 30, HALF = Math.PI/3;   // ±60° window
+  compass.clearRect(0,0,W,H);
+  compass.fillStyle = 'rgba(0,0,0,0.25)';
+  compass.fillRect(0,0,W,H);
+  const heading = -camera.rotation.y;
+  compass.font = '11px Courier New';
+  compass.textAlign = 'center';
+  for (const [b, label] of CARDINALS){
+    const d = wrapAngle(b - heading);
+    if (Math.abs(d) > HALF) continue;
+    const x = W/2 + d/HALF*(W/2);
+    compass.fillStyle = label==='N' ? '#b89a6a' : '#7d8a78';
+    compass.fillText(label, x, 13);
+    compass.fillRect(x-0.5, 18, 1, 5);
+  }
+  let target = null, color = '#c2a44a';
+  if (S.phase === 'FIND'){
+    let best = 1e9;
+    for (const p of pickups){
+      if (p.type !== 'clue' || p.found) continue;
+      const d = Math.hypot(p.x-camera.position.x, p.z-camera.position.z);
+      if (d < best){ best = d; target = p; }
+    }
+  } else if (S.phase === 'HOLLOW'){ target = HOLLOW; color = '#cfd6cf'; }
+  else if (S.phase === 'ESCORT'){ target = TRAILHEAD; color = '#7fb069'; }
+  if (target){
+    const d = wrapAngle(bearingTo(target.x, target.z) - heading);
+    if (Math.abs(d) <= HALF){
+      const x = W/2 + d/HALF*(W/2);
+      compass.fillStyle = color;
+      compass.beginPath();
+      compass.moveTo(x, 21); compass.lineTo(x-4, 28); compass.lineTo(x+4, 28);
+      compass.fill();
+    }
+  }
+  compass.fillStyle = '#cfd6cf';
+  compass.fillRect(W/2-0.5, 0, 1, 6);
+}
+
+/* ============================================================
+   INPUT
+   ============================================================ */
+const keys = {};
+addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (e.code === 'KeyF' && S.locked && !S.paused) toggleFlash();
+  if (e.code === 'KeyP'){ S.showFps = !S.showFps; fpsEl.textContent = ''; }
+  if (e.code === 'KeyE' && S.locked && !S.paused) interact();
+});
+addEventListener('keyup', e => keys[e.code] = false);
+
+addEventListener('mousemove', e => {
+  if (!S.locked || S.paused) return;
+  camera.rotation.y -= e.movementX * 0.0022;
+  camera.rotation.x = Math.max(-1.45, Math.min(1.45, camera.rotation.x - e.movementY * 0.0022));
+});
+
+function lock(){ canvas.requestPointerLock(); }
+document.addEventListener('pointerlockchange', () => {
+  S.locked = document.pointerLockElement === canvas;
+  if (!S.locked && S.phase !== 'TITLE' && S.phase !== 'END'){
+    S.paused = true;
+    el('pause').classList.remove('hidden');
+    if (A) A.master.gain.setTargetAtTime(0.15, A.actx.currentTime, 0.1);
+  } else if (S.locked){
+    S.paused = false;
+    el('pause').classList.add('hidden');
+    if (A) A.master.gain.setTargetAtTime(0.9, A.actx.currentTime, 0.1);
+  }
+});
+
+el('startBtn').addEventListener('click', () => {
+  A = initAudio();
+  A.actx.resume();
+  el('title').classList.add('hidden');
+  S.phase = 'FIND';
+  S.paused = false;
+  setObjective('Find traces of Marek — 0/3');
+  say("Base to Volunteer 6: search is SUSPENDED until first light. Whatever you think you saw, come back in. Over.");
+  say("You: Negative, base. I'm following the light I saw. Direction finder is picking up his gear. Over.", true);
+  lock();
+});
+el('resumeBtn').addEventListener('click', lock);
+
+function toggleFlash(){
+  if (S.flashBattery <= 0 && !S.flashOn){ if (A) A.click(); return; }
+  S.flashOn = !S.flashOn;
+  if (A) A.click();
+}
+
+/* ============================================================
+   GAME LOGIC
+   ============================================================ */
+const fwd = new THREE.Vector3();
+let nearPickup = null;
+
+function interact(){
+  if (nearPickup){
+    const p = nearPickup;
+    p.found = true;
+    scene.remove(p.mesh); scene.remove(p.glint);
+    if (A) A.pickupSnd();
+    if (p.type === 'battery'){
+      S.flashBattery = Math.min(100, S.flashBattery + 60);
+      S.batteriesUsed++;
+      say('[Battery replaced. Flashlight at ' + Math.round(S.flashBattery) + '%.]', true);
+    } else {
+      S.cluesFound++;
+      say('[You found ' + p.name + '.]', true);
+      say(p.msg);
+      if (S.cluesFound === 1){
+        entity.state = 'STALK';                      // the forest notices you
+      }
+      if (S.cluesFound >= 3){
+        S.phase = 'HOLLOW';
+        setObjective('Reach the source of the transmission');
+        say("Base: ...volunteer 6, your signal is— [static] —direction finder just locked onto a TRANSMISSION. That bearing goes nowhere. There's nothing on the map there. Over.");
+      } else {
+        setObjective('Find traces of Marek — ' + S.cluesFound + '/3');
+      }
+    }
+    nearPickup = null;
+    promptEl.textContent = '';
+    return;
+  }
+  if (S.phase === 'HOLLOW'){
+    const d = Math.hypot(marek.position.x-camera.position.x, marek.position.z-camera.position.z);
+    if (d < 4.5){
+      S.phase = 'ESCORT';
+      S.marekFollowing = true;
+      setObjective('Lead Marek to the trailhead — keep him in your light');
+      say('[Marek says nothing. When your light touches him, he stands.]', true);
+      say('Keep him inside your beam and head south for the trailhead. Do not stop. Do not let the light die.');
+      entity.state = 'STALK';
+      entity.huntTimer = 14;
+      if (A) A.droneGain.gain.setTargetAtTime(0.02, A.actx.currentTime, 4);
+    }
+  }
+}
+
+function relocateEntity(){
+  const a = Math.random()*Math.PI*2;
+  entity.x = camera.position.x + Math.sin(a)*45;
+  entity.z = camera.position.z + Math.cos(a)*45;
+  entityMesh.visible = false;
+}
+
+function updateEntity(dt){
+  const px = camera.position.x, pz = camera.position.z;
+  const dist = Math.hypot(entity.x-px, entity.z-pz);
+
+  if (entity.state === 'DORMANT'){ entityMesh.visible = false; return; }
+
+  if (entity.state === 'STALK'){
+    entity.angle += dt * 0.12 * (1 + Math.sin(S.time*0.05));
+    entity.radius += (Math.sin(S.time*0.13)*7) * dt;
+    entity.radius = Math.max(24, Math.min(38, entity.radius));
+    const tx = px + Math.sin(entity.angle)*entity.radius;
+    const tz = pz + Math.cos(entity.angle)*entity.radius;
+    entity.x += (tx-entity.x)*Math.min(1, dt*0.7);
+    entity.z += (tz-entity.z)*Math.min(1, dt*0.7);
+
+    entity.snapTimer -= dt;
+    if (entity.snapTimer <= 0){
+      entity.snapTimer = 7 + Math.random()*12;
+      if (A) A.snap(entity.x, terrainH(entity.x,entity.z)+1, entity.z);
+      S.composure = Math.max(0, S.composure - 6);
+    }
+    if (S.phase === 'ESCORT'){
+      entity.huntTimer -= dt;
+      if (entity.huntTimer <= 0){
+        entity.state = 'APPROACH';
+        if (!S.huntTaught){
+          S.huntTaught = true;
+          say('[Something is coming. Put your light on it before it reaches you.]', true);
+        }
+      }
+    }
+  }
+  else if (entity.state === 'APPROACH'){
+    const dirX = (px-entity.x)/Math.max(0.01,dist), dirZ = (pz-entity.z)/Math.max(0.01,dist);
+    entity.x += dirX * 2.6 * dt;
+    entity.z += dirZ * 2.6 * dt;
+    entity.stepTimer -= dt;
+    if (entity.stepTimer <= 0){
+      entity.stepTimer = 0.42;
+      if (A) A.entityStep(entity.x, terrainH(entity.x,entity.z), entity.z);
+    }
+    if (dist < 2.3) caught();
+  }
+  else if (entity.state === 'RETREAT'){
+    const dirX = (entity.x-px)/Math.max(0.01,dist), dirZ = (entity.z-pz)/Math.max(0.01,dist);
+    entity.x += dirX * 9 * dt;
+    entity.z += dirZ * 9 * dt;
+    entity.retreatT -= dt;
+    if (entity.retreatT <= 0){
+      entity.state = 'STALK';
+      entity.huntTimer = 16 + Math.random()*16;
+    }
+  }
+
+  camera.getWorldDirection(fwd);
+  const dx = entity.x-px, dz = entity.z-pz;
+  const dl = Math.max(0.01, Math.hypot(dx,dz));
+  const dot = (fwd.x*dx + fwd.z*dz)/dl;
+  const lit = S.flashOn && S.flashBattery > 0;
+  if (lit && dl < 27 && dot > 0.9){
+    entity.repelHeat += dt;
+    if (entity.repelHeat > 0.8){
+      entity.repelHeat = 0;
+      if (A) A.screech(entity.x, terrainH(entity.x,entity.z)+1.5, entity.z);
+      if (entity.state === 'APPROACH'){
+        entity.state = 'RETREAT'; entity.retreatT = 2.5;
+      } else {
+        relocateEntity();
+      }
+      if (!S.repelTaught){
+        S.repelTaught = true;
+        say('[It recoils from the light.]', true);
+      }
+      S.composure = Math.max(0, S.composure - 10);
+    }
+  } else {
+    entity.repelHeat = Math.max(0, entity.repelHeat - dt*0.6);
+  }
+
+  // silhouette: face the player, animate only while hunting
+  const y = terrainH(entity.x, entity.z);
+  entityMesh.position.set(entity.x, y, entity.z);
+  entityMesh.rotation.y = Math.atan2(px-entity.x, pz-entity.z);
+  entityMesh.visible = dist < 45 && entity.state !== 'DORMANT';
+  if (entityMixer){
+    const speed = entity.state === 'APPROACH' ? 1.3 : (entity.state === 'RETREAT' ? 2.4 : 0);
+    entityMixer.update(dt * speed);   // frozen mid-stride while stalking
+  }
+}
+
+function caught(){
+  S.caught++;
+  S.radio = Math.max(0, S.radio - 8);
+  S.composure = 0;
+  if (A) A.caughtSting();
+  flashEl.style.transition = 'none';
+  flashEl.style.opacity = 1;
+  setTimeout(() => {
+    flashEl.style.transition = 'opacity 1.6s';
+    flashEl.style.opacity = 0;
+  }, 900);
+  const b = bearingTo(TRAILHEAD.x, TRAILHEAD.z);
+  camera.position.x -= Math.sin(b)*14;
+  camera.position.z += Math.cos(b)*14;
+  camera.position.x = Math.max(-BOUND_X, Math.min(BOUND_X, camera.position.x));
+  camera.position.z = Math.max(-BOUND_Z, Math.min(BOUND_Z, camera.position.z));
+  if (S.marekFollowing){
+    marek.position.set(camera.position.x+2, 0, camera.position.z+2);
+    marek.position.y = terrainH(marek.position.x, marek.position.z);
+  }
+  entity.state = 'STALK';
+  entity.huntTimer = 18 + Math.random()*10;
+  relocateEntity();
+  say('[You come to on the ground. The radio crackles: "—olunteer 6, RESPOND—". Battery −8%.]', true);
+}
+
+function ending(name){
+  S.phase = 'END';
+  S.paused = true;
+  document.exitPointerLock();
+  const mins = Math.floor(S.time/60), secs = Math.floor(S.time%60);
+  el('endStats').innerHTML =
+    'TIME IN THE FOREST — ' + mins + ':' + String(secs).padStart(2,'0') + '<br>' +
+    'TRACES FOUND — ' + S.cluesFound + '/3 &nbsp;·&nbsp; BATTERIES USED — ' + S.batteriesUsed + '/4<br>' +
+    'TIMES IT REACHED YOU — ' + S.caught;
+  if (name === 'FIRST LIGHT'){
+    el('endTitle').textContent = 'FIRST LIGHT';
+    el('endText').textContent =
+      'Dawn breaks grey over the parking lot as the ranger truck pulls in. Marek climbs into the cab ' +
+      'without a word. As the doors close he looks back at the treeline — then at you — and quietly ' +
+      'says your name. You never told him your name. You never said it aloud all night.';
+    if (A){ A.droneGain.gain.setTargetAtTime(0, A.actx.currentTime, 2);
+            A.rumGain.gain.setTargetAtTime(0, A.actx.currentTime, 1); }
+  } else {
+    el('endTitle').textContent = 'HOLLOW';
+    el('endText').textContent =
+      'The radio dies. The darkness is total, and for the first time tonight, the forest is perfectly ' +
+      'silent. Then, from the ranger station speakers, your own voice — calm, unhurried: ' +
+      '"It’s fine. I found him. We’re staying."';
+    if (A){ A.master.gain.setTargetAtTime(0.12, A.actx.currentTime, 3); }
+  }
+  el('end').classList.remove('hidden');
+}
+
+/* ============================================================
+   MAIN LOOP
+   ============================================================ */
+const vel = new THREE.Vector3();
+let stepAcc = 0, bobT = 0, flickerT = 0, hbT = 0;
+let cricketT = 0.5, owlT = 20, pingT = 0, gustT = 5;
+let fpsFrames = 0, fpsTime = 0;
+const clock = new THREE.Clock();
+
+function update(dt){
+  S.time += dt;
+
+  // ---- movement ----
+  const sprinting = (keys['ShiftLeft'] || keys['ShiftRight']) && S.stamina > 1;
+  const speed = sprinting ? 4.6 : 2.2;
+  let mx = 0, mz = 0;
+  if (keys['KeyW']) mz -= 1;
+  if (keys['KeyS']) mz += 1;
+  if (keys['KeyA']) mx -= 1;
+  if (keys['KeyD']) mx += 1;
+  const moving = (mx || mz);
+  if (moving){
+    const l = Math.hypot(mx,mz); mx/=l; mz/=l;
+    const yaw = camera.rotation.y;
+    const wx = mx*Math.cos(yaw) + mz*Math.sin(yaw);
+    const wz = -mx*Math.sin(yaw) + mz*Math.cos(yaw);
+    vel.x += (wx*speed - vel.x) * Math.min(1, dt*8);
+    vel.z += (wz*speed - vel.z) * Math.min(1, dt*8);
+  } else {
+    vel.x -= vel.x * Math.min(1, dt*10);
+    vel.z -= vel.z * Math.min(1, dt*10);
+  }
+  S.stamina = sprinting && moving
+    ? Math.max(0, S.stamina - dt*14)
+    : Math.min(100, S.stamina + dt*9);
+
+  camera.position.x += vel.x * dt;
+  camera.position.z += vel.z * dt;
+
+  // tree collision via spatial hash (3×3 cells)
+  const cx = (camera.position.x/9)|0, cz = (camera.position.z/9)|0;
+  for (let ix = cx-1; ix <= cx+1; ix++){
+    for (let iz = cz-1; iz <= cz+1; iz++){
+      const cell = grid.get(ix+','+iz);
+      if (!cell) continue;
+      for (const t of cell){
+        const dx = camera.position.x-t.x, dz = camera.position.z-t.z;
+        const d = Math.hypot(dx,dz), min = t.r + 0.45;
+        if (d < min && d > 0.001){
+          camera.position.x = t.x + dx/d*min;
+          camera.position.z = t.z + dz/d*min;
+        }
+      }
+    }
+  }
+  // bounds
+  if (Math.abs(camera.position.x) > BOUND_X || Math.abs(camera.position.z) > BOUND_Z){
+    camera.position.x = Math.max(-BOUND_X, Math.min(BOUND_X, camera.position.x));
+    camera.position.z = Math.max(-BOUND_Z, Math.min(BOUND_Z, camera.position.z));
+    if (!S.boundsWarned){
+      S.boundsWarned = true;
+      say('Base: Volunteer 6, you are leaving the search grid. Turn back. Over.');
+    }
+  }
+
+  // ground + head bob
+  const hSpeed = Math.hypot(vel.x, vel.z);
+  bobT += dt * (4 + hSpeed*1.6);
+  const bob = Math.sin(bobT) * 0.045 * Math.min(1, hSpeed/2.2);
+  camera.position.y = terrainH(camera.position.x, camera.position.z) + 1.7 + bob;
+
+  // footsteps
+  stepAcc += hSpeed * dt;
+  const stride = sprinting ? 2.6 : 2.1;
+  if (stepAcc > stride){
+    stepAcc = 0;
+    if (A) A.footstep(sprinting);
+  }
+
+  // ---- flashlight ----
+  if (S.flashOn && S.flashBattery > 0){
+    S.flashBattery = Math.max(0, S.flashBattery - dt*0.21);
+    if (S.flashBattery <= 0){
+      S.flashOn = false;
+      say('[The flashlight dies.]', true);
+    }
+  }
+  lightRig.position.copy(camera.position);
+  lightRig.quaternion.slerp(camera.quaternion, 1 - Math.pow(0.0001, dt));
+  const entDist = Math.hypot(entity.x-camera.position.x, entity.z-camera.position.z);
+  const entActive = entity.state !== 'DORMANT';
+  if (S.flashOn && S.flashBattery > 0){
+    let inten = 170 * (0.94 + 0.06*Math.sin(S.time*1.3));
+    if (entActive && entDist < 18){
+      if (flickerT <= 0 && Math.random() < dt*2.4) flickerT = 0.05 + Math.random()*0.13;
+    }
+    if (flickerT > 0){ flickerT -= dt; inten *= (Math.random() < 0.5 ? 0.12 : 0.55); }
+    if (S.flashBattery < 15) inten *= 0.45 + 0.55*(S.flashBattery/15);
+    spot.intensity = inten;
+    spot.visible = true;
+  } else spot.visible = false;
+
+  // ---- radio battery: the clock ----
+  let drain = 0.105;
+  if (entActive && entDist < 20) drain *= 3;
+  S.radio = Math.max(0, S.radio - dt*drain);
+  if (S.radio <= 0 && S.phase !== 'END'){ ending('HOLLOW'); return; }
+  if (S.radio < 20 && !S.lowWarned){ S.lowWarned = true; say('[Radio battery critical.]', true); }
+
+  // ---- entity ----
+  updateEntity(dt);
+
+  // ---- Marek ----
+  let marekMoving = false;
+  if (S.marekFollowing){
+    const md = Math.hypot(marek.position.x-camera.position.x, marek.position.z-camera.position.z);
+    const lit = S.flashOn && S.flashBattery > 0;
+    if (lit && md < 18 && md > 2.6){
+      marekMoving = true;
+      const dirX = (camera.position.x-marek.position.x)/md;
+      const dirZ = (camera.position.z-marek.position.z)/md;
+      marek.position.x += dirX * 3.1 * dt;
+      marek.position.z += dirZ * 3.1 * dt;
+      marek.position.y = terrainH(marek.position.x, marek.position.z);
+      marek.rotation.y = Math.atan2(dirX, dirZ);
+    } else if (!lit && md > 3 && !S.marekStopWarned){
+      S.marekStopWarned = true;
+      say('[Marek has stopped. He only moves inside your light.]', true);
+      setTimeout(()=>{ S.marekStopWarned = false; }, 12000);
+    }
+    if (md > 26) say('[You’ve lost him. Go back for him.]', true);
+  }
+  if (marekMixer){
+    if (marekAnim.idle && marekAnim.walk){
+      const want = marekMoving ? 'walk' : 'idle';
+      if (marekAnim.cur !== want){
+        marekAnim.cur = want;
+        const toA = marekMoving ? marekAnim.walk : marekAnim.idle;
+        const fromA = marekMoving ? marekAnim.idle : marekAnim.walk;
+        toA.reset().play();
+        fromA.crossFadeTo(toA, 0.3, false);
+      }
+    }
+    marekMixer.update(dt);
+  }
+
+  // ---- win check ----
+  if (S.phase === 'ESCORT'){
+    const dT = Math.hypot(camera.position.x-TRAILHEAD.x, camera.position.z-TRAILHEAD.z);
+    const dM = Math.hypot(marek.position.x-TRAILHEAD.x, marek.position.z-TRAILHEAD.z);
+    if (dT < 11 && dM < 18){ ending('FIRST LIGHT'); return; }
+  }
+
+  // ---- interact prompt ----
+  nearPickup = null;
+  let bestD = 2.8;
+  for (const p of pickups){
+    if (p.found) continue;
+    const d = Math.hypot(p.x-camera.position.x, p.z-camera.position.z);
+    if (d < bestD){ bestD = d; nearPickup = p; }
+  }
+  if (nearPickup){
+    promptEl.textContent = 'E — TAKE ' + nearPickup.name.toUpperCase();
+  } else if (S.phase === 'HOLLOW' &&
+      Math.hypot(marek.position.x-camera.position.x, marek.position.z-camera.position.z) < 4.5){
+    promptEl.textContent = 'E — APPROACH MAREK';
+  } else promptEl.textContent = '';
+
+  for (const p of pickups){
+    if (p.found) continue;
+    const s = 0.35 + 0.2*Math.abs(Math.sin(S.time*2 + p.x));
+    p.glint.scale.setScalar(s);
+  }
+
+  // ---- composure (hidden) ----
+  let cDelta = 0;
+  if (entActive && entDist < 28) cDelta -= 3.5 * (1 - entDist/28);
+  if (!(S.flashOn && S.flashBattery > 0)) cDelta -= 1.1;
+  const dHollow = Math.hypot(camera.position.x-HOLLOW.x, camera.position.z-HOLLOW.z);
+  if (dHollow < 28 && S.phase !== 'FIND') cDelta -= 1.6;
+  if (cDelta === 0 && (!entActive || entDist > 32)) cDelta = 2.4;
+  S.composure = Math.max(0, Math.min(100, S.composure + cDelta*dt));
+  vigEl.style.opacity = ((100 - S.composure)/100 * 0.85).toFixed(3);
+  const fovT = 75 - (100 - S.composure)*0.055;
+  if (Math.abs(camera.fov - fovT) > 0.1){
+    camera.fov += (fovT - camera.fov)*Math.min(1, dt*2);
+    camera.updateProjectionMatrix();
+  }
+
+  // ---- audio frame ----
+  if (A){
+    camera.getWorldDirection(fwd);
+    A.listener(camera.position.x, camera.position.y, camera.position.z, fwd.x, fwd.z);
+
+    const quiet = (dHollow < 30) ? Math.max(0.06, dHollow/30) : 1;
+    A.wind.g.gain.setTargetAtTime(0.045*quiet, A.actx.currentTime, 0.8);
+    gustT -= dt;
+    if (gustT <= 0){
+      gustT = 4 + Math.random()*9;
+      A.wind.g.gain.setTargetAtTime((0.03 + Math.random()*0.05)*quiet, A.actx.currentTime, 2.2);
+    }
+    let cricketLevel = quiet;
+    if (entActive) cricketLevel *= Math.max(0, Math.min(1, (entDist-15)/25));
+    if (S.phase === 'ESCORT') cricketLevel *= 0.3;
+    cricketT -= dt;
+    if (cricketT <= 0){
+      cricketT = 0.4 + Math.random()*1.8;
+      if (cricketLevel > 0.05) A.cricket(camera.position.x, camera.position.y, camera.position.z, cricketLevel);
+    }
+    owlT -= dt;
+    if (owlT <= 0){
+      owlT = 28 + Math.random()*40;
+      if (!entActive || entDist > 30) A.owl(camera.position.x, camera.position.y, camera.position.z);
+    }
+    const prox = entActive ? Math.max(0, 1 - entDist/30) : 0;
+    A.rumGain.gain.setTargetAtTime(prox*0.12, A.actx.currentTime, 0.4);
+    A.statics.g.gain.setTargetAtTime(prox*0.05, A.actx.currentTime, 0.3);
+    const br = S.composure < 50 ? (50-S.composure)/50 : 0;
+    A.breath.g.gain.setTargetAtTime(br*0.05*(0.55+0.45*Math.sin(S.time*2.4)), A.actx.currentTime, 0.15);
+    if (S.composure < 40){
+      hbT -= dt;
+      if (hbT <= 0){
+        hbT = 0.45 + (S.composure/40)*0.65;
+        A.heartbeat();
+      }
+    }
+    let objD = 1e9;
+    if (S.phase === 'FIND'){
+      for (const p of pickups) if (p.type==='clue' && !p.found)
+        objD = Math.min(objD, Math.hypot(p.x-camera.position.x, p.z-camera.position.z));
+    } else if (S.phase === 'HOLLOW') objD = dHollow;
+    if (objD < 22){
+      pingT -= dt;
+      if (pingT <= 0){ pingT = 0.4 + objD/22*1.8; A.ping(); }
+    }
+  }
+
+  // ---- HUD ----
+  const rp = Math.ceil(S.radio);
+  radioEl.textContent = 'RADIO ' + rp + '%';
+  radioEl.className = rp <= 25 ? 'low' : '';
+  flBarEl.style.width = S.flashBattery + '%';
+  flBarEl.style.background = S.flashOn && S.flashBattery > 0 ? '#8fa37f' : '#4a5347';
+  drawCompass();
+  updateMessages(dt);
+}
+
+function animate(){
+  requestAnimationFrame(animate);
+  const dt = Math.min(0.05, clock.getDelta());
+  if (S.showFps){
+    fpsFrames++; fpsTime += dt;
+    if (fpsTime >= 0.5){
+      fpsEl.textContent = Math.round(fpsFrames/fpsTime) + ' FPS';
+      fpsFrames = 0; fpsTime = 0;
+    }
+  }
+  if (!S.paused && S.phase !== 'TITLE' && S.phase !== 'END') update(dt);
+  renderer.render(scene, camera);
+}
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+relocateEntity();
+animate();
+</script>
+</body>
+</html>
