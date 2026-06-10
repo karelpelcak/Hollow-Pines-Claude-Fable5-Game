@@ -7,7 +7,13 @@ A realistic first-person psychological horror game that runs in the browser at 6
 > design and photoreal PBR graphics, all generated from one instruction with
 > no hand-written code.
 
-> Full game design document: [`GAME_DESIGN_DOCUMENT.md`](GAME_DESIGN_DOCUMENT.md)
+## Prompt:
+```
+Create a professional game a realistic first-person horror game that runs in the browser at 60 FPS.
+The game takes place in a dark forest at night, with creepy atmosphere, immersive ambient sound design, and a clear objective required to finish the game.
+Focus on realism, suspense, exploration, psychological horror, and performance optimization for web browsers.
+Include the story, gameplay loop, mechanics, environment, audio design, technical stack, optimization strategy, roadmap, and ending.
+```
 
 ## How to run
 
